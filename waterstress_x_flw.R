@@ -26,22 +26,127 @@ waterstress_countries <- read_xlsx('data/raw_data/WRI/aqueduct_countries_2014010
   mutate_at(vars(All.sectors:Industrial), as.numeric)
 
 # FAO food loss and waste rates data
-fao_flw <- read_csv('data/crossreference_tables/fao_percentages_extended.csv')
+fao_flw <- read_csv('data/raw_data/FAOSTAT/fao_world_flw_clean.csv')
+
+# FAO world region lookup table
+region_lookup <- read_csv('data/raw_data/FAOSTAT/world_region_lookup.csv') %>%
+  mutate(country = gsub('\n', ' ', country))
 
 # FAOSTAT production data for crops and animals
-# Will need to be cleaned and individual items will need to be harmonized with the FLW rate data.
+# Already averaged this for 2014-2018, somewhat cleaned
 
-fp_fao <- file.path('data', 'raw_data/FAOSTAT/31aug2020')
+fp_fao <- file.path('data/cfs_io_analysis/faostat2017')
+files_read <- dir(fp_fao, pattern = '^production') # all files begin with production
+names(files_read) <- gsub('(production_)|(.csv)', '', files_read)
 
-# Production and yield data on crops, crops processed, livestock, livestock primary, and livestock processed.
-# Read the production CSVs
-prod_crop_rawdata <- read_csv(file.path(fp_fao, 'Production_Crops_E_All_Data_(Normalized).csv'))
-prod_cropsprocessed_rawdata <- read_csv(file.path(fp_fao, 'Production_CropsProcessed_E_All_Data_(Normalized).csv'))
-prod_livestock_rawdata <- read_csv(file.path(fp_fao, 'Production_Livestock_E_All_Data_(Normalized).csv'))
-prod_livestockprimary_rawdata <- read_csv(file.path(fp_fao, 'Production_LivestockPrimary_E_All_Data_(Normalized).csv'))
-prod_livestockprocessed_rawdata <- read_csv(file.path(fp_fao, 'Production_LivestockProcessed_E_All_Data_(Normalized).csv'))
+fao_prod <- map_dfr(files_read, ~ read_csv(file.path(fp_fao, .)), .id = 'category') 
 
+# Crosswalk table with FAO codes
+fao_cw <- read_csv('data/crossreference_tables/faostat_flw_crosswalk.csv')
+
+
+# Calculate cumulative FLW rates ------------------------------------------
+
+fao_flw <- fao_flw %>%
+  mutate(flw_cumulative = 1 - (1-loss_agricultural_production)*(1-loss_handling_storage)*(1-loss_processing_packaging)*(1-loss_distribution)*(1-loss_consumption))
 
 # Clean FAO data ----------------------------------------------------------
 
+# Just do a very crude estimate of how much of each of the FLW category numbers, by weight, is produced in each country.
+
+setdiff(fao_prod$item_code, fao_cw$code) # All codes are found in the crosswalk.
+
+fao_prod <- fao_prod %>%
+  left_join(fao_cw %>% select(code, flw_category_number), by = c('item_code' = 'code')) %>%
+  filter(element %in% 'Production', unit %in% 'tonnes')
+
+fao_prod_sums <- fao_prod %>%
+  group_by(area_code, area, flw_category_number) %>%
+  summarize(production = sum(value, na.rm = TRUE))
+
+
+# Join production, food waste, and water stress datasets ------------------
+
+# Fix Ivory Coast
+fao_prod_sums$area[grepl('Ivoire',fao_prod_sums$area)] <- "C\xf4te d'Ivoire"
+region_lookup$country[grepl('Ivoire',region_lookup$country)] <- "C\xf4te d'Ivoire"
+
+# Join production with the world region lookup table
+sort(setdiff(x = region_lookup$country, y = fao_prod_sums$area)) # These names need to match
+
+# Manually create matching key
+region_names_match <- c('Bolivia', 'Bosnia & Herzegovina', 'Czech Republic', 'Iran', "Lao People㤼㸲s Democratic Republic", 'Luxemburg', 'Macedonia', 'Moldova', 'United republic of Tanzania', 'USA', 'Venezuela', 'Vietnam', 'Islamic republic of Iraq', 'Libyan Arab Jamahiriya')
+faoprod_names_match <- c('Bolivia (Plurinational State of)', 'Bosnia and Herzegovina', 'Czechia', 'Iran (Islamic Republic of)', "Lao People's Democratic Republic", 'Luxembourg', "The former Yugoslav Republic of Macedonia", 'Republic of Moldova', 'United Republic of Tanzania', 'United States of America', 'Venezuela (Bolivarian Republic of)', 'Viet Nam', 'Iraq', 'Libya')
+
+# Change names in region lookup table to match
+for (i in seq_along(region_names_match)) {
+  region_lookup$country[region_lookup$country == region_names_match[i]] <- faoprod_names_match[i]
+}
+
+# Join production and global region
+fao_prod_sums <- inner_join(fao_prod_sums, region_lookup, by = c('area' = 'country'))
+
+# Join production and waste now that we have region
+fao_prod_sums <- inner_join(fao_prod_sums, fao_flw, by = c('region' = 'continent', 'flw_category_number' = 'category_number'))
+
+# Country names need to be matched to join water stress with production+waste
+
+setdiff(x = fao_prod_sums$area, y = waterstress_countries$Name)
+
+# These are the countries we need to find in the FAO dataset
+sort(setdiff(y = fao_prod_sums$area, x = waterstress_countries$Name))
+
+# Manually create matching key
+waterstress_names_match <- c('Bolivia', 'Brunei', 'Cape Verde', 'Czech Republic', 'East Timor', 'Federated States of Micronesia', 'Guinea Bissau', 'Iran', 'Ivory Coast', 'Laos', 'Macedonia', 'Moldova', 'North Korea', 'Republic of Serbia', "Republic of the Congo", 'Russia', 'South Korea', 'Syria', 'Taiwan', 'The Bahamas', 'Venezuela', 'Vietnam')
+
+faoprod_names_match <- c('Bolivia (Plurinational State of)', 'Brunei Darussalam', 'Cabo Verde', 'Czechia', 'Timor-Leste', 'Micronesia (Federated States of)', 'Guinea-Bissau', 'Iran (Islamic Republic of)', "Côte d'Ivoire", "Lao People's Democratic Republic", "The former Yugoslav Republic of Macedonia", "Republic of Moldova", "Democratic People's Republic of Korea", 'Serbia', 'Congo', 'Russian Federation', 'Republic of Korea', 'Syrian Arab Republic', 'China, Taiwan Province of', 'Bahamas', 'Venezuela (Bolivarian Republic of)', 'Viet Nam')
+
+# Change names in waterstress to match
+for (i in seq_along(waterstress_names_match)) {
+  waterstress_countries$Name[waterstress_countries$Name == waterstress_names_match[i]] <- faoprod_names_match[i]
+}
+
+# Now all are fixed except a few small countries.
+# Join
+prod_stress_waste <- inner_join(fao_prod_sums, waterstress_countries, by = c('area' = 'Name'))
+# This results in 152 countries with all data.
+
+#### FIXME Join data ignoring production, just using the relative waste rates and the water stress values. This will give more data.
+
+
+# Do some basic tests -----------------------------------------------------
+
+# 1. Rate of food waste vs water stress
+# 2. Total food waste vs water stress
+# 3. Per capita food waste vs water stress
+
+# Do a crude measurement of water stress by region
+
+theme_set(theme_minimal())
+
+ggplot(prod_stress_waste, aes(x = region, y = Agricultural)) +
+  geom_boxplot() +
+  ggtitle('Agricultural water stress score distributions by global region')
+
+# For each FLW category, plot the rate of food waste vs ag water stress score
+
+ggplot(prod_stress_waste, aes(y = Agricultural, x = flw_cumulative, group = region, color = region)) +
+  facet_wrap(~ paste(category, type), scales = 'free_y') +
+  stat_summary(geom = 'pointrange', 
+               fun = function(y) quantile(y, probs = 0.5),
+               fun.min = function(y) quantile(y, probs = 0.25),
+               fun.max = function(y) quantile(y, probs = 0.75)) +
+  scale_color_brewer(palette = "Set1") +
+  coord_flip()
+
+# Do another crude calculation of food waste by category and country, to see if total food waste vs ag water stress score is different
+# This may need to be converted to per capita
+
+prod_stress_waste %>%
+  mutate(total_waste = flw_cumulative * production) %>%
+  ggplot(aes(x = Agricultural, y = total_waste, color = region)) +
+  facet_wrap(~ paste(category, type), scales = 'free') +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") +
+  scale_y_log10()
 
