@@ -17,6 +17,8 @@
 
 library(tidyverse)
 library(readxl)
+library(lme4)
+library(MuMIn)
 
 # Water stress
 # Read a highly formatted xlsx in, needs to be cleaned but just a little
@@ -44,6 +46,8 @@ fao_prod <- map_dfr(files_read, ~ read_csv(file.path(fp_fao, .)), .id = 'categor
 # Crosswalk table with FAO codes
 fao_cw <- read_csv('data/crossreference_tables/faostat_flw_crosswalk.csv')
 
+# World population
+data(pop, package = 'wpp2019')
 
 # Calculate cumulative FLW rates ------------------------------------------
 
@@ -111,8 +115,18 @@ for (i in seq_along(waterstress_names_match)) {
 prod_stress_waste <- inner_join(fao_prod_sums, waterstress_countries, by = c('area' = 'Name'))
 # This results in 152 countries with all data.
 
-#### FIXME Join data ignoring production, just using the relative waste rates and the water stress values. This will give more data.
+# Join population
+setdiff(unique(prod_stress_waste$area), pop$name)
 
+pop_names_match <- c('North Macedonia', 'Eswatini', 'Dem. Republic of the Congo')
+faoprod_names_match <- c("The former Yugoslav Republic of Macedonia", "Swaziland", "Democratic Republic of the Congo")
+
+# Change names in pop to match
+for (i in seq_along(pop_names_match)) {
+  pop$name[pop$name == pop_names_match[i]] <- faoprod_names_match[i]
+}
+
+prod_stress_waste <- inner_join(prod_stress_waste, pop, by = c('area' = 'name'))
 
 # Do some basic tests -----------------------------------------------------
 
@@ -150,3 +164,94 @@ prod_stress_waste %>%
   scale_color_brewer(palette = "Set1") +
   scale_y_log10()
 
+prod_stress_waste %>%
+  mutate(total_waste_per_capita = (flw_cumulative * production)/(`2015`* 1000)) %>%
+  ggplot(aes(x = Agricultural, y = total_waste_per_capita, color = region)) +
+  facet_wrap(~ paste(category, type), scales = 'free') +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") 
+
+# Sum up the per capita food waste by country
+overall_waste <- prod_stress_waste %>%
+  mutate(total_waste_per_capita = (flw_cumulative * production)/(`2015`* 1000)) %>%
+  group_by(region, area_code, area) %>%
+  summarize(total_waste_per_capita = sum(total_waste_per_capita),
+            ag_water_stress = Agricultural[1])
+
+ggplot(overall_waste, aes(x = ag_water_stress, y = total_waste_per_capita, color = region)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") 
+
+ggplot(overall_waste, aes(x = ag_water_stress, y = total_waste_per_capita, color = region)) +
+  facet_wrap(~ region, scales = 'free_y') +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") 
+
+# Simple mixed effects model with a random intercept for each region
+totalwaste_mm <- lmer(total_waste_per_capita ~ ag_water_stress + (1|region), data = overall_waste)
+summary(totalwaste_mm)
+confint(totalwaste_mm, method = 'boot')
+r.squaredGLMM(totalwaste_mm) # 68% of variation explained by region, 4% explained by water stress index.
+
+# Result: 
+
+# Alternative with the two small regions collapsed ------------------------
+
+overall_waste_consolidated <- overall_waste %>%
+  mutate(region = fct_collapse(region, 
+                               `South and Southeast Asia` = c('South and Southeast Asia', 'Industrialized Asia'),
+                               `Americas and Oceania` = c('Latin America', 'North America and Oceania')
+                               ))
+
+totalwaste_mm <- lmer(total_waste_per_capita ~ ag_water_stress + (1|region), data = overall_waste_consolidated)
+summary(totalwaste_mm)
+confint(totalwaste_mm, method = 'boot', nsim = 9999)
+r.squaredGLMM(totalwaste_mm) # 25% of variation explained by region, 4% explained by water stress index.
+# This might be a bit of an improvement
+
+# Results
+# Coefficient: -0.037, 95% bootstrap CI = [-0.072, -0.004]
+# R-squared marginal: 0.040, conditional: 0.249
+
+# Plot without model fits
+ggplot(overall_waste_consolidated, aes(x = ag_water_stress, y = total_waste_per_capita, color = region)) +
+  facet_wrap(~ region) +
+  geom_point() +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(name = 'Agricultural water stress index') +
+  scale_y_continuous(name = 'Per capita food waste index', limits = c(0, 1.9), expand = c(0, 0)) +
+  theme(legend.position = 'none')
+
+# Use coefficient estimates from each continent to show a fitted line plus confidence interval separately on each panel.
+pred_dat <- expand_grid(ag_water_stress = seq(0, 5, by = 0.01), region = unique(overall_waste_consolidated$region))
+# Use bootstrap to get the fitted values with each iteration and then take quantiles
+
+
+pred_func <- function(mm) {
+  mm_coef <- coef(mm)
+  pred_dat_intercept <- left_join(pred_dat, data.frame(region = row.names(mm_coef$region), intercept = mm_coef$region[,1]))
+  with(pred_dat_intercept, intercept + ag_water_stress * mm_coef$region$ag_water_stress[1])
+}
+# try with bootMer()
+pred_boot <- bootMer(totalwaste_mm, pred_func, nsim = 9999)
+
+predCL <- t(apply(pred_boot$t, MARGIN = 2, FUN = quantile, probs = c(0.025, 0.975)))
+
+pred_dat <- pred_dat %>% 
+  mutate(total_waste_per_capita = predict(totalwaste_mm, newdata = pred_dat, type = 'response'),
+         ci_min = predCL[,1],
+         ci_max = predCL[,2])
+
+# Plot with model fits
+p_fit <- ggplot(overall_waste_consolidated, aes(x = ag_water_stress, y = total_waste_per_capita)) +
+  facet_wrap(~ region) +
+  geom_line(data = pred_dat) +
+  geom_line(data = pred_dat, aes(y = ci_min), linetype = 'dashed') +
+  geom_line(data = pred_dat, aes(y = ci_max), linetype = 'dashed') +
+  geom_point(aes(color = region)) +
+  scale_color_brewer(palette = "Set1") +
+  scale_x_continuous(name = 'Agricultural water stress index') +
+  scale_y_continuous(name = 'Per capita food waste index', limits = c(0, 1.9), expand = c(0, 0)) +
+  theme(legend.position = 'none')
+
+ggsave('/nfs/qread-data/figures/foodwaste_vs_waterstress.png', p_fit, height = 5, width = 7, dpi = 300)
