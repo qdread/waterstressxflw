@@ -178,6 +178,8 @@ overall_waste <- prod_stress_waste %>%
   summarize(total_waste_per_capita = sum(total_waste_per_capita),
             ag_water_stress = Agricultural[1])
 
+write_csv(overall_waste, 'data/raw_data/water_x_food/food_waste_index.csv')
+
 ggplot(overall_waste, aes(x = ag_water_stress, y = total_waste_per_capita, color = region)) +
   geom_point() +
   scale_color_brewer(palette = "Set1") 
