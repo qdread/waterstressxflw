@@ -26,7 +26,7 @@ avg_ws_proj <- projectRaster(avg_ws, crs = CRS("+proj=moll +lon_0=0 +x_0=0 +y_0=
 ggplot() +
   geom_raster(aes(x = x, y = y, fill = ws_avg), data = avg_ws_proj, na.rm = TRUE) +
   geom_sf(data = countries, fill = 'transparent') +
-  scale_fill_viridis_c(na.value = 'transparent', na.translate = FALSE) +
+  scale_fill_viridis_c(na.value = 'transparent') +
   theme(panel.background = element_rect(fill = 'transparent'),
         panel.grid = element_line(color = 'gray75'),
         axis.title = element_blank())

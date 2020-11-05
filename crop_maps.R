@@ -145,6 +145,8 @@ continent_lookup <- read_csv('data/raw_data/water_x_food/world_region_lookup_for
 countries_regions <- countries %>% dplyr::select(NAME) %>% cbind(continent_lookup[,-1])
 
 library(fasterize)
+library(biscale)
+library(cowplot)
 
 countries_regions_raster <- fasterize(countries_regions, production_mask[[1]], by = 'region')
 region_code_raster <- calc(countries_regions_raster, function(x) which(x == 1)[1])
@@ -224,3 +226,31 @@ ggplot() +
         panel.grid = element_line(color = 'gray75'),
         axis.title = element_blank(),
         legend.title = element_blank())
+
+# Attempt with biscale
+flw_water_data <- fortify(flw_water_raster)
+flw_water_data <- bi_class(flw_water_data, x = "ws_avg", y = "layer", dim = 2, style = "quantile")
+
+brewer_dark <- RColorBrewer::brewer.pal(8, "Dark2")
+bipal <- bi_pal_manual(val_1_1 = brewer_dark[1], val_1_2 = brewer_dark[6], val_2_1 = brewer_dark[2], val_2_2 = brewer_dark[4])
+
+pbiv <- ggplot() +
+  geom_raster(aes(x = x, y = y, fill = bi_class), data = flw_water_data %>% filter(!is.na(ws_avg) & !is.na(layer)), show.legend = FALSE) +
+  geom_sf(data = countries, fill = 'transparent') +
+  bi_scale_fill(pal = "GrPink", dim = 2) +
+  theme(panel.background = element_rect(fill = 'transparent'),
+        panel.grid = element_line(color = 'gray75'),
+        axis.title = element_blank(),
+        legend.title = element_blank())
+
+legend <- bi_legend(pal = "GrPink",
+                    dim = 2,
+                    xlab = "Higher Water Scarcity ",
+                    ylab = "Higher Food Waste ",
+                    size = 8)
+
+finalPlot <- ggdraw() +
+  draw_plot(pbiv, 0, 0, 0.7, 1) +
+  draw_plot(legend, 0.7, 0.3, 0.3, 0.3)
+
+finalPlot
