@@ -228,13 +228,13 @@ p_dominantcrop <- ggplot() +
   geom_raster(aes(x = x, y = y, fill = factor(layer, labels = group_labels)), data = crop_dominant_reclass) +
   geom_sf(data = countries %>% st_crop(extent_countries), fill = 'transparent', size = line_width) +
   geom_sf(data = st_as_sfc(extent_countries), fill = 'transparent') +
-  scale_fill_manual(name = 'dominant crop', labels = group_labels, values = group_colors, na.value = 'transparent', na.translate = FALSE)
+  scale_fill_manual(name = 'dominant crop type', labels = group_labels, values = group_colors, na.value = 'transparent', na.translate = FALSE)
 
 p_wasterate <- ggplot() +
-  geom_raster(aes(x = x, y = y, fill = layer), data = waste_wtdmeanrate_raster) +
+  geom_raster(aes(x = x, y = y, fill = layer * 100), data = waste_wtdmeanrate_raster) +
   geom_sf(data = countries %>% st_crop(extent_countries), fill = 'transparent', size = line_width) +
   geom_sf(data = st_as_sfc(extent_countries), fill = 'transparent') +
-  scale_fill_viridis_c(name = 'food waste\nrate', na.value = 'transparent') 
+  scale_fill_viridis_c(name = 'food waste\nrate (%)', na.value = 'transparent') 
 
 p_hotspot <- ggplot() +
   geom_raster(aes(x = x, y = y, fill = bi_class), data = flw_water_data %>% filter(!is.na(ws_avg) & !is.na(layer)), show.legend = FALSE) +
@@ -263,4 +263,32 @@ p_final <- ggdraw(plot_grid(
                  rel_widths=c(1, 0.3)))
 )
 
-ggsave('data/figures/four_maps_frontiers_review.pdf', p_final, height = 4, width = 11)
+ggsave('data/figures/frontiers_ms/four_maps_frontiers_review.pdf', p_final, height = 4, width = 11)
+
+
+# Plot each one as a separate figure --------------------------------------
+
+# If only panel D is used in the main MS, the remaining ones can go in the appendix.
+
+# Use ggdraw() to lay out plot and legend
+# Manually draw the legend with four color boxes (bi_legend does not give enough control over the relative sizes).
+grpink <- biscale:::pal_grpink(n = 2)
+legdat <- data.frame(x = c(2,1,2,1), y=c(2,2,1,1), class=grpink)
+legend_hotspot_manual <- ggplot(legdat, aes(x=x, y=y, fill=class)) + 
+  geom_tile() + scale_fill_identity() +
+  labs(x = substitute(paste('higher water scarcity', ""%->%"")), y = substitute(paste('higher food loss & waste', ""%->%""))) +
+  theme(axis.title = element_text(size = rel(0.4))) + coord_fixed()
+
+p_hotspot_with_legend <- ggdraw() +
+  draw_plot(p_hotspot, x = 0, y = 0, width = 0.8, height = 1, scale = 1, hjust = 0, vjust = 0) +
+  draw_plot(legend_hotspot_manual, x = 0.76, y = 0.3, width = 0.2, height = 0.4, scale = 1, hjust = 0, vjust = 0)
+
+# Save
+ggsave('data/figures/frontiers_ms/hotspot_map_frontiers_review.pdf', p_hotspot_with_legend, height = 2.5, width = 5.5)
+ggsave('data/figures/frontiers_ms/hotspot_map_frontiers_review.png', p_hotspot_with_legend, height = 2.5, width = 5.5, dpi = 400)
+
+
+# Save the remaining figures as individual PNG files.
+ggsave('data/figures/frontiers_ms/waterscarcity_map.png', p_waterscarcity, height = 2.5, width = 5.5, dpi = 400)
+ggsave('data/figures/frontiers_ms/dominantcrop_map.png', p_dominantcrop + theme(legend.text = element_text(size = rel(0.5))), height = 2.5, width = 5.5, dpi = 400)
+ggsave('data/figures/frontiers_ms/wasterate_map.png', p_wasterate, height = 2.5, width = 5.5, dpi = 400)
