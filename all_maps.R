@@ -272,12 +272,15 @@ ggsave('data/figures/frontiers_ms/four_maps_frontiers_review.pdf', p_final, heig
 
 # Use ggdraw() to lay out plot and legend
 # Manually draw the legend with four color boxes (bi_legend does not give enough control over the relative sizes).
+label_x <- 'water scarcity'
+label_y <- 'food loss and waste'
 grpink <- biscale:::pal_grpink(n = 2)
 legdat <- data.frame(x = c(2,1,2,1), y=c(2,2,1,1), class=grpink)
-legend_hotspot_manual <- ggplot(legdat, aes(x=x, y=y, fill=class)) + 
-  geom_tile() + scale_fill_identity() +
-  labs(x = substitute(paste('higher water scarcity', ""%->%"")), y = substitute(paste('higher food loss & waste', ""%->%""))) +
-  theme(axis.title = element_text(size = rel(0.4))) + coord_fixed()
+legend_hotspot_manual <- ggplot(legdat, aes(x=x, y=y)) + 
+  geom_text(aes(label = lab), data = data.frame(lab = c('low','high','low','high'), x = c(1, 2, 0, 0), y = c(0, 0, 1, 2)), angle = c(0, 0, 90, 90), size = 2, vjust = c(-0.5, -0.5, 1.5, 1.5)) +
+  geom_tile(aes(fill = class)) + scale_fill_identity() +
+  labs(x = label_x, y = label_y) +
+  theme(axis.title = element_text(size = rel(0.7))) + coord_fixed()
 
 p_hotspot_with_legend <- ggdraw() +
   draw_plot(p_hotspot, x = 0, y = 0, width = 0.8, height = 1, scale = 1, hjust = 0, vjust = 0) +
